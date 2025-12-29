@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "supplychain-notebooks"
+version = "0.1.0"
+dependencies = [
+  "openmeteoapi @ file:../openmeteo_api",
+  "openmeteo-requests",
+  "aeroapi-market @ file:../aeromarket-api",
+  "requests-cache",
+  "retry-requests",
+  "numpy",
+  "pandas",
+  "python-dotenv",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+exclude = ["*"]

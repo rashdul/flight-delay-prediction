@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openmeteoapi"
+version = "0.1.0"
+dependencies = [
+  "openmeteo-requests",
+  "requests-cache",
+  "retry-requests",
+  "python-dotenv",
+  "numpy",
+  "pandas",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,2 @@
+First idea: flight delay prediction model
+    - APIs: weather data API, flight status API
