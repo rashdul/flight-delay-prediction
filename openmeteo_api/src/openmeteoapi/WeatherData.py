@@ -6,9 +6,10 @@ Created: 2025-12-27
 
 """
 import pandas as pd
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List
+
+import requests
 import airportsdata
-import math
 
 import os
 from dotenv import load_dotenv
@@ -20,62 +21,6 @@ load_dotenv()
 
 class Weather:
     
-    @staticmethod
-    def _haversine_distance_km(
-        lat1: float, lon1: float, lat2: float, lon2: float
-    ) -> float:
-        r = 6371.0088
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        dphi = math.radians(lat2 - lat1)
-        dlambda = math.radians(lon2 - lon1)
-
-        a = (
-            math.sin(dphi / 2) ** 2
-            + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-        )
-        return 2 * r * math.asin(math.sqrt(a))
-
-    @staticmethod
-    def find_nearest_airport(
-        latitude: float,
-        longitude: float,
-        code_type: str = "iata",
-        max_distance_km: Optional[float] = None,
-    ) -> Tuple[str, Dict[str, Any], float]:
-        """
-        Find the nearest airport in `airportsdata` to the given coordinates.
-
-        Returns:
-            (airport_code, airport_dict, distance_km)
-        """
-        code_type_upper = code_type.strip().upper()
-        if code_type_upper not in {"IATA", "ICAO"}:
-            raise ValueError("code_type must be 'iata' or 'icao'.")
-
-        airports = airportsdata.load(code_type_upper)
-        best_code: Optional[str] = None
-        best_airport: Optional[Dict[str, Any]] = None
-        best_distance: float = float("inf")
-
-        for airport_code, airport in airports.items():
-            dist = Weather._haversine_distance_km(
-                latitude, longitude, float(airport["lat"]), float(airport["lon"])
-            )
-            if dist < best_distance:
-                best_distance = dist
-                best_code = airport_code
-                best_airport = airport
-
-        if best_code is None or best_airport is None:
-            raise ValueError("No airports available in airportsdata dataset.")
-
-        if max_distance_km is not None and best_distance > max_distance_km:
-            raise ValueError(
-                f"No airport within {max_distance_km} km (nearest is {best_distance:.2f} km: {best_code})."
-            )
-
-        return best_code, best_airport, best_distance
 
     def __init__(
         self,
@@ -86,38 +31,17 @@ class Weather:
         code_type: str = "iata",
         timezone: str = "Local",
         hourly_vars: List[str] | None = None,
-        fallback_latitude: Optional[float] = None,
-        fallback_longitude: Optional[float] = None,
-        nearest_max_distance_km: Optional[float] = None,
     ):
         self.api_caller = api_caller
         self.airport_code = airport_code
-        self.resolved_airport_code = airport_code
-
-        code_type_lower = code_type.strip().lower()
-        if code_type_lower == "iata":
+        if code_type == "iata":
             airport = airportsdata.load("IATA").get(airport_code)
-        elif code_type_lower == "icao":
-            airport = airportsdata.load("ICAO").get(airport_code)
         else:
-            raise ValueError("code_type must be 'iata' or 'icao'.")
-
+            airport = airportsdata.load("ICAO").get(airport_code)
         if airport is None:
-            if fallback_latitude is None or fallback_longitude is None:
-                raise ValueError(
-                    f"Airport with {code_type_lower} code {airport_code} not found in airportsdata. "
-                    "Provide fallback_latitude/fallback_longitude to use the nearest airport instead."
-                )
-
-            nearest_code, nearest_airport, _ = Weather.find_nearest_airport(
-                latitude=float(fallback_latitude),
-                longitude=float(fallback_longitude),
-                code_type=code_type_lower,
-                max_distance_km=nearest_max_distance_km,
-            )
-            self.resolved_airport_code = nearest_code
-            airport = nearest_airport
-
+            self._handle_missing_lat_lon()
+            if not hasattr(self, 'latitude') or not hasattr(self, 'longitude'):
+                raise ValueError(f"Airport with {code_type} code {airport_code} not found.")
         self.latitude = airport["lat"]
         self.longitude = airport["lon"]
         self.start_date = start_date
@@ -140,6 +64,27 @@ class Weather:
             "relative_humidity_2m",
             "pressure_msl",
         ]
+    def _handle_missing_lat_lon(self):
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": f"{self.airport_code} airport",
+            "format": "json"
+        }
+
+        headers = {
+            "User-Agent": "flight-delay-research/1.0 (rashidulaijan@gmail.com)"
+        }
+
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()  
+
+        data = resp.json()
+
+        lat = float(data[0]["lat"])
+        lon = float(data[0]["lon"])
+
+        self.latitude = lat
+        self.longitude = lon
 
     def fetch(self):
         params = {
@@ -186,7 +131,6 @@ class Weather:
             data[var_name] = hourly.Variables(idx).ValuesAsNumpy()
         df = pd.DataFrame(data)
         df['queried_airport_code'] = self.airport_code
-        df['resolved_airport_code'] = self.resolved_airport_code
         # df['flight_date'] = pd.to_datetime(df['date']).dt.tz_convert(self.timezone)
         # print(self.timezone)
 
@@ -209,4 +153,5 @@ class Weather:
             data[var_name] = daily.Variables(idx).ValuesAsNumpy()
 
         return pd.DataFrame(data)
+
 
