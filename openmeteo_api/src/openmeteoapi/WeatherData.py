@@ -6,8 +6,7 @@ Created: 2025-12-27
 
 """
 import pandas as pd
-from typing import List, Sequence
-from datetime import timedelta, timezone as dt_timezone
+from typing import List
 
 import requests
 import airportsdata
@@ -27,7 +26,7 @@ class Weather:
     def __init__(
         self,
         api_caller,
-        airport_code: str | Sequence[str],
+        airport_code: str,
         start_date: str,
         end_date: str,
         code_type: str = "iata",
@@ -35,22 +34,8 @@ class Weather:
         hourly_vars: List[str] | None = None,
     ):
         self.api_caller = api_caller
-        if isinstance(airport_code, str):
-            airport_codes = [c.strip().upper() for c in airport_code.split(",") if c.strip()]
-        else:
-            airport_codes = [str(c).strip().upper() for c in airport_code if str(c).strip()]
-
-        if not airport_codes:
-            raise ValueError("airport_code must contain at least one airport code")
-
-        self.airport_codes = airport_codes
-        self.airport_code = ",".join(airport_codes)
-
-        normalized_code_type = code_type.strip().lower()
-        if normalized_code_type not in ["iata", "icao"]:
-            raise ValueError("code_type must be 'iata' or 'icao'")
-
-        self.latitude, self.longitude = self._initialize_locations(normalized_code_type)
+        self.airport_code = airport_code
+        self.latitude, self.longitude = self._initialize_locations(code_type)
         self.start_date = start_date
         self.end_date = end_date
         if timezone not in ["auto", "GMT"]:
@@ -74,7 +59,7 @@ class Weather:
     def _initialize_locations(self, code_type: str):
         lats = []
         lons = []
-        for code in self.airport_codes:
+        for code in self.airport_code:
             if code_type == "iata":
                 airport = airportsdata.load("IATA").get(code)
             else:
@@ -112,7 +97,7 @@ class Weather:
 
         return lat, lon
 
-    def _fetch_all(self):
+    def fetch(self):
         lats = ",".join(map(str, self.latitude))
         lons = ",".join(map(str, self.longitude))
         params = {
@@ -125,113 +110,61 @@ class Weather:
         }
         ARCHIVE_URL = os.getenv("ARCHIVE_URL")
 
-        return self.api_caller.get(ARCHIVE_URL, params)
-
-    def fetch(self):
-        responses = self._fetch_all()
+        responses = self.api_caller.get(ARCHIVE_URL, params)
         return responses
 
-    def _hourly_response_to_dataframe(self, response, queried_airport_code: str) -> pd.DataFrame:
+    def to_hourly_dataframe(self) -> pd.DataFrame:
+        response = self.fetch()
         hourly = response.Hourly()
 
-        start_utc = pd.to_datetime(hourly.Time(), unit="s", utc=True)
-        end_utc = pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True)
-        interval = pd.Timedelta(seconds=hourly.Interval())
-
-        time_index = pd.date_range(
-            start=start_utc,
-            end=end_utc,
-            freq=interval,
-            inclusive="left",
-        )
-
-        if self.timezone == "auto":
-            tz_name = response.Timezone() if hasattr(response, "Timezone") else None
-            if isinstance(tz_name, (bytes, bytearray)):
-                tz_name = tz_name.decode("utf-8", errors="ignore")
-            if isinstance(tz_name, str):
-                tz_name = tz_name.strip().strip("\x00")
-
-            if tz_name:
-                try:
-                    time_index = time_index.tz_convert(tz_name)
-                except Exception:
-                    tz_name = None
-
-            if not tz_name:
-                utc_offset_seconds = (
-                    response.UtcOffsetSeconds()
-                    if hasattr(response, "UtcOffsetSeconds")
-                    else 0
-                )
-                fixed_tz = dt_timezone(timedelta(seconds=int(utc_offset_seconds)))
-                time_index = time_index.tz_convert(fixed_tz)
+        # time_index = pd.date_range(
+        #     start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+        #     end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+        #     freq=pd.Timedelta(seconds=hourly.Interval()),
+        #     inclusive="left",
+        # )
+        if self.timezone == "GMT":
+            time_index = pd.date_range(
+                start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+                end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+                freq=pd.Timedelta(seconds=hourly.Interval()),
+                inclusive="left",
+            )
+        else:
+            time_index = pd.date_range(
+                start=pd.to_datetime(hourly.Time(), unit="s", utc=True).tz_convert(self.timezone),
+                end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True).tz_convert(self.timezone),
+                freq=pd.Timedelta(seconds=hourly.Interval()),
+                inclusive="left",
+            )
 
         data = {"date": time_index}
 
-        variables_len = hourly.VariablesLength() if hasattr(hourly, "VariablesLength") else 0
         for idx, var_name in enumerate(self.hourly_vars):
-            if idx < variables_len:
-                values = hourly.Variables(idx).ValuesAsNumpy()
-                data[var_name] = (
-                    pd.Series(values).reindex(range(len(time_index))).to_numpy()
-                )
-            else:
-                data[var_name] = pd.Series(index=range(len(time_index)), dtype="float64").to_numpy()
-
+            data[var_name] = hourly.Variables(idx).ValuesAsNumpy()
         df = pd.DataFrame(data)
-        df["queried_airport_code"] = queried_airport_code
+        df['queried_airport_code'] = self.airport_code
+        # df['flight_date'] = pd.to_datetime(df['date']).dt.tz_convert(self.timezone)
+        # print(self.timezone)
+
         return df
-
-    def to_hourly_dataframe(self) -> pd.DataFrame:
-        responses = self._fetch_all()
-        if len(responses) <= 1:
-            return self._hourly_response_to_dataframe(responses[0], self.airport_codes[0])
-
-        dfs = []
-        for idx, response in enumerate(responses):
-            code = self.airport_codes[idx] if idx < len(self.airport_codes) else self.airport_code
-            dfs.append(self._hourly_response_to_dataframe(response, code))
-        return pd.concat(dfs, ignore_index=True)
     
     def to_daily_dataframe(self) -> pd.DataFrame:
-        responses = self._fetch_all()
-        if len(responses) <= 1:
-            response = responses[0]
-            daily = response.Daily()
+        response = self.fetch()
+        daily = response.Daily()
 
-            time_index = pd.date_range(
-                start=pd.to_datetime(daily.Time(), unit="s", utc=True),
-                end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
-                freq="D",
-                inclusive="left",
-            )
+        time_index = pd.date_range(
+            start=pd.to_datetime(daily.Time(), unit="s", utc=True),
+            end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
+            freq="D",
+            inclusive="left",
+        )
 
-            data = {"date": time_index}
+        data = {"date": time_index}
 
-            for idx, var_name in enumerate(self.hourly_vars):
-                data[var_name] = daily.Variables(idx).ValuesAsNumpy()
+        for idx, var_name in enumerate(self.hourly_vars):
+            data[var_name] = daily.Variables(idx).ValuesAsNumpy()
 
-            df = pd.DataFrame(data)
-            df["queried_airport_code"] = self.airport_codes[0]
-            return df
+        return pd.DataFrame(data)
 
-        dfs = []
-        for idx, response in enumerate(responses):
-            daily = response.Daily()
-            time_index = pd.date_range(
-                start=pd.to_datetime(daily.Time(), unit="s", utc=True),
-                end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
-                freq="D",
-                inclusive="left",
-            )
 
-            data = {"date": time_index}
-            for j, var_name in enumerate(self.hourly_vars):
-                data[var_name] = daily.Variables(j).ValuesAsNumpy()
-            df = pd.DataFrame(data)
-            code = self.airport_codes[idx] if idx < len(self.airport_codes) else self.airport_code
-            df["queried_airport_code"] = code
-            dfs.append(df)
-
-        return pd.concat(dfs, ignore_index=True)
