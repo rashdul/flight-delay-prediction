@@ -32,6 +32,7 @@ class Weather:
         end_date: str,
         code_type: str = "iata",
         timezone: str = "auto",
+        time: str = "past",
         hourly_vars: List[str] | None = None,
     ):
         self.api_caller = api_caller
@@ -56,6 +57,9 @@ class Weather:
         if timezone not in ["auto", "GMT"]:
             raise ValueError("timezone must be 'auto' or 'GMT'")
         self.timezone = timezone
+        if time not in ["past", "future"]:
+            raise ValueError("time must be 'past' or 'future'")
+        self.time = time
         self.hourly_vars = hourly_vars or [
             "snowfall",
             "rain",
@@ -123,9 +127,15 @@ class Weather:
             "hourly": self.hourly_vars,
             "timezone": self.timezone,
         }
-        ARCHIVE_URL = os.getenv("ARCHIVE_URL")
+        URL = ""
+        if self.time == "past":
+            URL = os.getenv("ARCHIVE_URL")
+        else:
+            URL = os.getenv("FORECAST_URL")
+        print("Fetching weather data from:", URL)
 
-        return self.api_caller.get(ARCHIVE_URL, params)
+
+        return self.api_caller.get(URL, params)
 
     def fetch(self):
         responses = self._fetch_all()

@@ -9,11 +9,18 @@ Created: 2025-12-27
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from aeroapi_market.APICaller import APICaller
+from dotenv import load_dotenv
 import pandas as pd
+import requests
 import airportsdata
+from datetime import datetime, timedelta
+
+from geopy.distance import geodesic
+import numpy as np
 
 
 class Flights:
@@ -38,21 +45,33 @@ class Flights:
             Retrieves flights for a specific airport within a date range.
     """
 
-    def __init__(self, api_caller: APICaller, airport_code: str, from_local: str, to_local: str, keep_cols: bool = False) -> None:
+    def __init__(self, api_caller: APICaller, from_local: str, flight_number: Optional[str] = None, code_type: str = "iata") -> None:
         """
         Initializes a `Flights` instance.
 
         Args:
             api_caller (APICaller): An instance of the `APICaller` class.
+            from_local (str): Start date/time in local time (YYYY-MM-DD).
+            flight_number (str, optional): The flight number to look up. Defaults to None.
+        Raises:
+            ValueError: If the date difference between `from_local` and `to_local` is not exactly 1 hour.
         """
+        fmt = "%Y-%m-%d"
+        wanted_fmt = "%Y-%m-%dT%H:%M"
+
+        self.dt_from = datetime.strptime(from_local, fmt)
+        
         self.api_caller = api_caller
+        self.code_type = code_type
         self.endpoint = "flights"
-        self.airport_code = airport_code
-        self.from_local = from_local
-        self.to_local = to_local
+        self.flight_number = flight_number
         self._flight_df: Optional[pd.DataFrame] = None
+        self.response_flight_response = None
+        base_dt = self._get_date_local_time()
+        self.from_local = base_dt.strftime(wanted_fmt)
+        self.to_local = (base_dt + timedelta(hours=1)).strftime(wanted_fmt)
         # self._last_airport_flights_request: Optional[Tuple[str, str, str, str, str]] = None
-        self.keep_cols = keep_cols
+
 
 
     
@@ -97,7 +116,7 @@ class Flights:
         else:
             airport = airportsdata.load("ICAO").get(self.airport_code)
 
-        df["date"] = df["scheduled_local"].dt.floor("H")
+        df["date"] = df["scheduled_local"].dt.floor("h")
 
         if self.code_type == "iata":
             airport = airportsdata.load("IATA").get(self.airport_code)
@@ -106,27 +125,13 @@ class Flights:
             airport = airportsdata.load("ICAO").get(self.airport_code)
             df['queried_airport_icao'] = self.airport_code
         df['date'] = pd.to_datetime(df['date']).dt.tz_convert(airport["tz"])
-        if not self.keep_cols:
-            if self.code_type == "iata":
-                cols_to_keep = [
-                    "direction",
-                    "date",
-                    "queried_airport_iata",
-                ]
-            else:
-                cols_to_keep = [
-                    "direction",
-                    "date",
-                    "queried_airport_icao",
-                ]
-            df = df[cols_to_keep]
 
         self._flight_df = df
         return df
 
     def get_airport_flights(
         self,
-        code_type: str = "icao",
+        code_type: str = "iata",
         direction: str = "Both",
     ) -> Dict[str, Any]:
         """
@@ -143,6 +148,7 @@ class Flights:
         """
         self.code_type = code_type
         self._migrate_legacy_state()
+        self.airport_code = self._get_airport_code()
         endpoint = self._get_airport_flights_endpoint(
             airport_code=self.airport_code,
             from_local=self.from_local,
@@ -221,6 +227,131 @@ class Flights:
 
         return int(self._flight_df.shape[0])
     
+    def _get_lat_lon(self, airport_code):
+        url = "https://nominatim.openstreetmap.org/search"
+        params = {
+            "q": f"{airport_code} airport",
+            "format": "json"
+        }
+
+        headers = {
+            "User-Agent": "flight-delay-research/1.0 (rashidulaijan@gmail.com)"
+        }
+
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()  
+
+        data = resp.json()
+
+        lat = float(data[0]["lat"])
+        lon = float(data[0]["lon"])
+
+        return lat, lon
+    
+    def _get_distance(self, origin_code, destination_code):
+        origin = self._get_lat_lon(origin_code)      # JFK
+        destination = self._get_lat_lon(destination_code)  # LAX
+
+        distance_miles = np.floor(geodesic(origin, destination).miles)
+
+        return distance_miles
+
+    def _look_up_flights(self, flight_number):
+        if self._flight_df is None:
+            return pd.DataFrame()
+        
+        df_flight = self._flight_df[self._flight_df['flight_number'] == flight_number]
+        return df_flight
+    
+
+    def _get_approx_flight_time_mins(self, origin_code, destination_code):
+        end_point = self._get_airport_endpoint(origin_code, destination_code, code_type="iata")
+        response = self.api_caller.get(endpoint=end_point, params=None, headers=None)['approxFlightTime']
+        ## convert to minutes
+        
+        hours, minutes, seconds = map(int, response.split(":"))
+
+        total_minutes = hours * 60 + minutes + seconds / 60
+        return total_minutes
+
+    def _get_airport_endpoint(
+        self,
+        airport_from: str,
+        airport_to: str,
+        code_type: str = "iata",
+    ) -> str:
+        return f"airports/{code_type}/{airport_from}/distance-time/{airport_to}"
+    
+    def _get_arrival_datetime(self):
+        if self.response_flight_response is not None:
+            return self.response_flight_response[0]['arrival']['scheduledTime']['local']
+        end_point = self._get_flights_endpoint(search_by="number")
+        params = {
+            "dateLocalRole": "Departure"
+        }
+        response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
+        self.response_flight_response = response
+        return response[0]['arrival']['scheduledTime']['local']
+    
+    def _get_airport_code(self):
+        if self.response_flight_response is not None:
+            return self.response_flight_response[0]['departure']['airport']['iata']
+        end_point = self._get_flights_endpoint(search_by="number")
+        params = {
+            "dateLocalRole": "Departure"
+        }
+        response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
+        self.response_flight_response = response
+        return response[0]['departure']['airport']['iata']
+    
+    def _get_date_local_time(self):
+        if self.response_flight_response is not None:
+            response =  self.response_flight_response[0]['departure']['scheduledTime']['local']
+            dt = datetime.fromisoformat(response)
+            floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            # print( floored_dt)
+            return floored_dt
+        end_point = self._get_flights_endpoint(search_by="number")
+        params = {
+            "dateLocalRole": "Departure"
+        }
+        response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
+        self.response_flight_response = response
+        response = response[0]['departure']['scheduledTime']['local']
+        dt = datetime.fromisoformat(response)
+        floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        # print( floored_dt)
+
+        return floored_dt
+    
+    def build_final_flight_response(
+        self,
+    ) -> pd.DataFrame:
+        dict_df = {}
+        df_flight = self._look_up_flights(self.flight_number)
+        if df_flight.empty or df_flight['direction'].values[0] != 'Departure':
+            raise ValueError(f"Flight number {self.flight_number} not found in the data.")
+        dest = df_flight['airport_iata'].values[0]
+        origin = self.airport_code
+        approx_flight_time_min = self._get_approx_flight_time_mins(origin, dest)
+        arrival_datetime = self._get_arrival_datetime()
+        dt = datetime.fromisoformat(arrival_datetime)
+        floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        
+        
+        
+        dict_df['Origin'] = self.airport_code 
+        dict_df['Dest'] = df_flight['airport_iata'].values[0]
+        dict_df['IATA_Code_Operating_Airline'] = self.flight_number[:2]
+        dict_df['Distance'] = self._get_distance(origin, dest)
+        dict_df['scheduled_congestion'] = self.get_count_airport_flights() 
+        dict_df['CRSElapsedTime'] = approx_flight_time_min
+        dict_df['arr_datetime'] = floored_dt
+        dict_df['date_local'] = df_flight['date'].values[0]
+        final_df = pd.DataFrame([dict_df])
+        return final_df
+
+        
     def get_hourly_airport_flights_count(
         self,
     ) -> pd.DataFrame:
@@ -241,7 +372,8 @@ class Flights:
     ) -> pd.DataFrame:
 
         if self._flight_df is None:
-            return pd.DataFrame()
+            response = self.get_airport_flights()
+            self._flight_to_df(response)
 
 
         return self._flight_df.copy()
@@ -322,3 +454,36 @@ class Flights:
             f"{self.endpoint}/airports/"
             f"{code_type}/{airport_code}/{from_local}/{to_local}"
         )
+    
+
+    def _get_flights_endpoint(
+        self,
+        search_by: str = "number",
+    ) -> str:
+        date = self.dt_from.strftime("%Y-%m-%d")
+        flight_number = self.flight_number.replace(" ", "")
+        return (
+            f"/flights/{search_by}/"
+            f"{flight_number}/{date}"
+        )
+    
+#     def test_method(self):
+#         return self._get_distance("JFK", "LAX")
+
+
+
+# # for testing purposes
+
+# if __name__ == "__main__":
+#     load_dotenv()
+#     API_KEY = os.getenv("AERODATABOX_API_KEY")
+#     BASE_URL = os.getenv("AERODATABOX_BASE_URL")
+#     api_caller = APICaller(api_key=API_KEY, base_url=BASE_URL)
+
+#     flights = Flights(api_caller=api_caller,
+#         airport_code="ATL",
+#         from_local="2025-10-26T00:00",
+#         to_local="2025-10-26T01:00",
+#         flight_number="F9 1241",
+#         )
+#     print(flights.test_method())
