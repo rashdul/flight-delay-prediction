@@ -51,6 +51,10 @@ class Weather:
         if normalized_code_type not in ["iata", "icao"]:
             raise ValueError("code_type must be 'iata' or 'icao'")
 
+        if code_type == "iata":
+            self.airport = airportsdata.load("IATA")
+        else:
+            self.airport = airportsdata.load("ICAO")
         self.latitude, self.longitude = self._initialize_locations(normalized_code_type)
         self.start_date = start_date
         self.end_date = end_date
@@ -79,10 +83,7 @@ class Weather:
         lats = []
         lons = []
         for code in self.airport_codes:
-            if code_type == "iata":
-                airport = airportsdata.load("IATA").get(code)
-            else:
-                airport = airportsdata.load("ICAO").get(code)
+            airport = self.airport.get(code)
             if airport is None:
                 lat, lon = self._handle_missing_lat_lon(code)
                 if lat is None or lon is None:
@@ -195,14 +196,18 @@ class Weather:
 
     def to_hourly_dataframe(self) -> pd.DataFrame:
         responses = self._fetch_all()
-        if len(responses) <= 1:
+        num_airports = len(responses)
+        print(f"Successfully fetched data for {num_airports} airport(s).")
+        if num_airports <= 1:
             return self._hourly_response_to_dataframe(responses[0], self.airport_codes[0])
 
         dfs = []
         for idx, response in enumerate(responses):
             code = self.airport_codes[idx] if idx < len(self.airport_codes) else self.airport_code
             dfs.append(self._hourly_response_to_dataframe(response, code))
-        return pd.concat(dfs, ignore_index=True)
+        return {"success": True,
+                "num_airports": num_airports == len(self.airport_codes),
+                "data": pd.concat(dfs, ignore_index=True)}
     
     def to_daily_dataframe(self) -> pd.DataFrame:
         responses = self._fetch_all()

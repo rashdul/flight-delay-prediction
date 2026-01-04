@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Local env/config
+.env
+
+# Notebook caches
+.cache.sqlite
+notebooks/.cache.sqlite
+
+# Large local data artifacts (keep out of git)
+*.parquet
+*.pkl

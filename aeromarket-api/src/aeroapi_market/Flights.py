@@ -12,15 +12,15 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from aeroapi_market.APICaller import APICaller
+from APICaller import APICaller
 from dotenv import load_dotenv
-import pandas as pd
-import requests
-import airportsdata
+import pandas as pd # type: ignore
+import requests # type: ignore
+import airportsdata # type: ignore
 from datetime import datetime, timedelta
 
-from geopy.distance import geodesic
-import numpy as np
+from geopy.distance import geodesic # type: ignore
+import numpy as np # type: ignore
 
 
 class Flights:
@@ -248,6 +248,7 @@ class Flights:
 
         return lat, lon
     
+    @staticmethod
     def _get_distance(self, origin_code, destination_code):
         origin = self._get_lat_lon(origin_code)      # JFK
         destination = self._get_lat_lon(destination_code)  # LAX
