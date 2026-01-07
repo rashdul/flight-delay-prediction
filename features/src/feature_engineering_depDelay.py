@@ -11,8 +11,12 @@ import numpy as np
 
 class FeatureEngineeringDepDelay:
 
-  def __init__(self, df: pd.DataFrame):
+  def __init__(self, df: pd.DataFrame, classification: bool = False, type: str = "old") -> None:
       self.df = df.copy()
+      self.classification = classification
+      if type not in ["old", "new"]:
+          raise ValueError("type must be either 'old' or 'new'")
+      self.type = type
 
   def _is_peak_hour(self, hour: int) -> int:
       # Define peak hours (e.g., 6-9 AM and 4-7 PM)
@@ -45,10 +49,33 @@ class FeatureEngineeringDepDelay:
 
       return self.df
 
+  def _add_old_stats_features(self) -> pd.DataFrame:
+      """
+      Create features based on airline delay statistics.
+      """
+      df = self.df
+      airline_stats = self._open_pickle("./data/airline_stats.pkl")
+
+      df = df.merge(
+          airline_stats,
+          how="left",
+          left_on="IATA_Code_Operating_Airline",
+          right_index=True,
+      )
+
+      df["on_time_rate"] = df["on_time_rate"].fillna(airline_stats.loc["__UNKNOWN__", "on_time_rate"])
+      df["average_delay"] = df["average_delay"].fillna(airline_stats.loc["__UNKNOWN__", "average_delay"])
+      df["delay_stddev"] = df["delay_stddev"].fillna(airline_stats.loc["__UNKNOWN__", "delay_stddev"])
+
+      self.df = df
+      return self.df
+
   def _add_stats_features(self) -> pd.DataFrame:
       """
       Create features based on airline delay statistics.
       """
+      if self.type == "new":
+        return self._add_old_stats_features()
       df = self.df
       airline_stats = (
           df
@@ -83,24 +110,71 @@ class FeatureEngineeringDepDelay:
       self.df = df
       return self.df
 
+
+  def _add_old_congestion_features(self) -> pd.DataFrame:
+      """
+      Create features based on airport congestion levels.
+      """
+      df = self.df
+      congestion_quantiles = self._open_pickle("./data/congestion_quantiles.pkl")
+      dep_quantiles = congestion_quantiles['dep_quantiles']
+      arr_quantiles = congestion_quantiles['arr_quantiles']
+
+      df['is_high_dep_congestion'] = df['dep_scheduled_congestion'].apply(lambda x: 1 if x >= dep_quantiles[2] else 0)
+      df['is_high_arr_congestion'] = df['arr_scheduled_congestion'].apply(lambda x: 1 if x >= arr_quantiles[2] else 0)
+
+      df['dep_congestion_bucket'] = df['dep_scheduled_congestion'].apply(lambda x: self._define_congestion_bucket(x, dep_quantiles))
+      df['arr_congestion_bucket'] = df['arr_scheduled_congestion'].apply(lambda x: self._define_congestion_bucket(x, arr_quantiles))
+      self.df = df
+      return self.df
+
   def _add_congestion_features(self) -> pd.DataFrame:
       """
       Create features based on airport congestion levels.
 
       """
+      if self.type == "new":
+        return self._add_old_congestion_features()
       dep_quantiles = self.df['dep_scheduled_congestion'].quantile([0.25, 0.75, 0.9]).to_list()
       arr_quantiles = self.df['arr_scheduled_congestion'].quantile([0.25, 0.75, 0.9]).to_list()
+      _save_path = "./data/congestion_quantiles.pkl"
+      self._save_pickle({'dep_quantiles': dep_quantiles, 'arr_quantiles': arr_quantiles}, _save_path)
       self.df['is_high_dep_congestion'] = self.df['dep_scheduled_congestion'].apply(lambda x: 1 if x >= dep_quantiles[2] else 0)
       self.df['is_high_arr_congestion'] = self.df['arr_scheduled_congestion'].apply(lambda x: 1 if x >= arr_quantiles[2] else 0)
 
       self.df['dep_congestion_bucket'] = self.df['dep_scheduled_congestion'].apply(lambda x: self._define_congestion_bucket(x, dep_quantiles))
       self.df['arr_congestion_bucket'] = self.df['arr_scheduled_congestion'].apply(lambda x: self._define_congestion_bucket(x, arr_quantiles))
       return self.df
+    
+    
+  def _add_old_route_features(self) -> pd.DataFrame:
+      """
+      Create features based on route statistics.
+      """
+      df = self.df
+      route_stats = self._open_pickle("./data/route_stats.pkl")
+
+      df["route"] = df["Origin"] + "-" + df["Dest"]
+      df = df.merge(
+          route_stats,
+          how="left",
+          left_on="route",
+          right_index=True,
+      )
+
+      df["average_route_delay"] = df["average_route_delay"].fillna(route_stats.loc["__UNKNOWN__", "average_route_delay"])
+      df["delay_route_stddev"] = df["delay_route_stddev"].fillna(route_stats.loc["__UNKNOWN__", "delay_route_stddev"])
+
+      self.df = df
+      return self.df
+
 
   def _add_route_features(self) -> pd.DataFrame:
       """
       Create features based on route statistics.
       """
+      if self.type == "new":
+        return self._add_old_route_features()
       df = self.df
       df['route'] = df['Origin'] + '-' + df['Dest']
       airline_stats = (
@@ -232,14 +306,27 @@ class FeatureEngineeringDepDelay:
   def test_method(self) -> pd.DataFrame:
       self.df = self._add_stats_features()
       return self.df
+  
+  def _classification_schema(self, x) -> pd.DataFrame:
+      if x <= 60:
+        return 0
+      else:
+        return 1
 
-  def engineer_features(self) -> pd.DataFrame:
-      cols_to_drop = ['Origin', 'Dest', 'dep_scheduled_congestion', 'arr_scheduled_congestion', 'Origin', 'Dest', 'DepDelayMinutes',]
+  def engineer_features(self, is_test=False) -> pd.DataFrame:
+      cols_to_drop = ['Origin', 'Dest', 'dep_scheduled_congestion', 'arr_scheduled_congestion', 'Origin', 'Dest', 'DepDelayMinutes', 'arr_date']
+      if self.type == "new":
+        cols_to_drop.remove('arr_date')
+        cols_to_drop.remove('DepDelayMinutes')
+      if (self.classification and self.type == "old") or is_test:
+          self.df['DepDelayCategory'] = self.df['DepDelayMinutes'].apply(self._classification_schema)
+          cols_to_drop.append('log1p_DepDelayMinutes')
       self.df = self._seperate_time_features()
       self.df = self._add_stats_features()
       self.df = self._add_congestion_features()
       self.df = self._add_route_features()
-      self.df = self._add_log1p_target()
+      if self.type == "old" or is_test:
+        self.df = self._add_log1p_target()
       self.df = self._add_interaction_features()
       self.df.drop(columns=cols_to_drop, inplace=True)
       return self.df

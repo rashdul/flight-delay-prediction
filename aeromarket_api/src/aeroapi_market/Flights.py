@@ -1,9 +1,8 @@
-""""
+"""
 A class for interacting with the AeroDataBox flights endpoints via API.Market for an easy to retrieve flight data.
 
 Author: Rashed Aldulijan
 Created: 2025-12-27
-
 """
 
 
@@ -12,12 +11,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from APICaller import APICaller
+from .APICaller import APICaller
 from dotenv import load_dotenv
 import pandas as pd # type: ignore
 import requests # type: ignore
 import airportsdata # type: ignore
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from geopy.distance import geodesic # type: ignore
 import numpy as np # type: ignore
@@ -58,6 +57,11 @@ class Flights:
         """
         fmt = "%Y-%m-%d"
         wanted_fmt = "%Y-%m-%dT%H:%M"
+        is_today_or_future = date.fromisoformat(from_local) >= date.today()
+        if is_today_or_future:
+            self.is_future = True
+        else:
+            self.is_future = False
 
         self.dt_from = datetime.strptime(from_local, fmt)
         
@@ -68,8 +72,10 @@ class Flights:
         self._flight_df: Optional[pd.DataFrame] = None
         self.response_flight_response = None
         base_dt = self._get_date_local_time()
-        self.from_local = base_dt.strftime(wanted_fmt)
-        self.to_local = (base_dt + timedelta(hours=1)).strftime(wanted_fmt)
+        self.from_local = base_dt[0].strftime(wanted_fmt)
+        self.from_local_arr = base_dt[1].strftime(wanted_fmt)
+        self.to_local = (base_dt[0] + timedelta(hours=1)).strftime(wanted_fmt)
+        self.to_local_arr = (base_dt[1] + timedelta(hours=1)).strftime(wanted_fmt)
         # self._last_airport_flights_request: Optional[Tuple[str, str, str, str, str]] = None
 
 
@@ -124,13 +130,18 @@ class Flights:
         else:
             airport = airportsdata.load("ICAO").get(self.airport_code)
             df['queried_airport_icao'] = self.airport_code
-        df['date'] = pd.to_datetime(df['date']).dt.tz_convert(airport["tz"])
+        # df['date'] = pd.to_datetime(df['date']).dt.tz_convert(airport["tz"])
 
-        self._flight_df = df
+
+        if self._flight_df is None:
+            self._flight_df = df
         return df
 
     def get_airport_flights(
         self,
+        airport_code: str | None = None,
+        from_local: str | None = None,
+        to_local: str | None = None,
         code_type: str = "iata",
         direction: str = "Both",
     ) -> Dict[str, Any]:
@@ -146,13 +157,19 @@ class Flights:
         Returns:
             Dict[str, Any]: The API response containing flight data.
         """
+        if from_local is None:
+            from_local = self.from_local
+        if to_local is None:
+            to_local = self.to_local
         self.code_type = code_type
         self._migrate_legacy_state()
-        self.airport_code = self._get_airport_code()
+        if airport_code is None:
+            self.airport_code = self._get_airport_code()
+            airport_code = self.airport_code
         endpoint = self._get_airport_flights_endpoint(
-            airport_code=self.airport_code,
-            from_local=self.from_local,
-            to_local=self.to_local,
+            airport_code=airport_code,
+            from_local=from_local,
+            to_local=to_local,
             code_type=code_type,
         )
         params = self.get_airport_flights_params(direction=direction)
@@ -227,7 +244,8 @@ class Flights:
 
         return int(self._flight_df.shape[0])
     
-    def _get_lat_lon(self, airport_code):
+    @staticmethod
+    def _get_lat_lon(airport_code):
         url = "https://nominatim.openstreetmap.org/search"
         params = {
             "q": f"{airport_code} airport",
@@ -249,9 +267,9 @@ class Flights:
         return lat, lon
     
     @staticmethod
-    def _get_distance(self, origin_code, destination_code):
-        origin = self._get_lat_lon(origin_code)      # JFK
-        destination = self._get_lat_lon(destination_code)  # LAX
+    def _get_distance(origin_code, destination_code):
+        origin = Flights._get_lat_lon(origin_code)
+        destination = Flights._get_lat_lon(destination_code)
 
         distance_miles = np.floor(geodesic(origin, destination).miles)
 
@@ -285,14 +303,18 @@ class Flights:
     
     def _get_arrival_datetime(self):
         if self.response_flight_response is not None:
-            return self.response_flight_response[0]['arrival']['scheduledTime']['local']
+            if self.is_future:
+                return self.response_flight_response[0]['arrival']['scheduledTime']['local']
+            return self.response_flight_response[0]['arrival']['revisedTime']['local']
         end_point = self._get_flights_endpoint(search_by="number")
         params = {
             "dateLocalRole": "Departure"
         }
         response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
         self.response_flight_response = response
-        return response[0]['arrival']['scheduledTime']['local']
+        if self.is_future:
+            return response[0]['arrival']['scheduledTime']['local']
+        return response[0]['arrival']['revisedTime']['local']
     
     def _get_airport_code(self):
         if self.response_flight_response is not None:
@@ -307,23 +329,51 @@ class Flights:
     
     def _get_date_local_time(self):
         if self.response_flight_response is not None:
-            response =  self.response_flight_response[0]['departure']['scheduledTime']['local']
-            dt = datetime.fromisoformat(response)
-            floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            if self.is_future:
+                departure_dt = self.response_flight_response[0]['departure']['scheduledTime']['local']
+                arrival_dt =  self.response_flight_response[0]['arrival']['scheduledTime']['local']
+            else:
+                departure_dt = self.response_flight_response[0]['departure']['revisedTime']['local']
+                arrival_dt =  self.response_flight_response[0]['arrival']['revisedTime']['local']
+            dt_dep = datetime.fromisoformat(departure_dt)
+            dt_arr = datetime.fromisoformat(arrival_dt)
+            floored_dt_dep = dt_dep.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            floored_dt_arr = dt_arr.replace(minute=0, second=0, microsecond=0, tzinfo=None)
             # print( floored_dt)
-            return floored_dt
+            return floored_dt_dep, floored_dt_arr
         end_point = self._get_flights_endpoint(search_by="number")
         params = {
             "dateLocalRole": "Departure"
         }
         response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
         self.response_flight_response = response
-        response = response[0]['departure']['scheduledTime']['local']
-        dt = datetime.fromisoformat(response)
-        floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        if self.is_future:
+            departure_dt = response[0]['departure']['scheduledTime']['local']
+            arrival_dt = response[0]['arrival']['scheduledTime']['local']
+        else:
+            departure_dt = response[0]['departure']['revisedTime']['local']
+            arrival_dt = response[0]['arrival']['revisedTime']['local']
+        dt_dep = datetime.fromisoformat(departure_dt)
+        dt_arr = datetime.fromisoformat(arrival_dt)
+        floored_dt_dep = dt_dep.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        floored_dt_arr = dt_arr.replace(minute=0, second=0, microsecond=0, tzinfo=None)
         # print( floored_dt)
 
-        return floored_dt
+        return floored_dt_dep, floored_dt_arr
+    
+    def _get_arrival_count_airport_flights(
+            self,
+            airport_code: str,
+    ) -> int:
+        response = self.get_airport_flights(airport_code=airport_code,
+            from_local=self.from_local_arr,
+            to_local=self.to_local_arr,
+            code_type="iata",
+        )
+
+        df_flight = self._flight_to_df(response)
+        return int(df_flight.shape[0])
+        
     
     def build_final_flight_response(
         self,
@@ -344,11 +394,12 @@ class Flights:
         dict_df['Origin'] = self.airport_code 
         dict_df['Dest'] = df_flight['airport_iata'].values[0]
         dict_df['IATA_Code_Operating_Airline'] = self.flight_number[:2]
-        dict_df['Distance'] = self._get_distance(origin, dest)
-        dict_df['scheduled_congestion'] = self.get_count_airport_flights() 
+        dict_df['Distance'] = self._get_distance(origin_code=origin, destination_code=dest)
+        dict_df['dep_scheduled_congestion'] = self.get_count_airport_flights() 
+        dict_df['arr_scheduled_congestion'] = self._get_arrival_count_airport_flights(airport_code=dest)
         dict_df['CRSElapsedTime'] = approx_flight_time_min
         dict_df['arr_datetime'] = floored_dt
-        dict_df['date_local'] = df_flight['date'].values[0]
+        dict_df['dep_date_local'] = df_flight['date'].iloc[0].to_pydatetime()
         final_df = pd.DataFrame([dict_df])
         return final_df
 
@@ -468,8 +519,8 @@ class Flights:
             f"{flight_number}/{date}"
         )
     
-#     def test_method(self):
-#         return self._get_distance("JFK", "LAX")
+    def test_method(self):
+        return self._get_distance("JFK", "LAX")
 
 
 

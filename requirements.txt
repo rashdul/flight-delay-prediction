@@ -18,3 +18,5 @@ requests_cache
 tqdm
 retry_requests
 geopy
+lightgbm
+xgboost
