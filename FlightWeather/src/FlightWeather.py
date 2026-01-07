@@ -2,8 +2,8 @@
 
 import os
 
-from APICaller import OpenMeteoAPICaller
-from WeatherData import Weather
+from openmeteo_api.src.openmeteoapi.APICaller import APICaller as OpenMeteoAPICaller
+from openmeteo_api.src.openmeteoapi.WeatherData import Weather
 import pandas as pd
 from aeromarket_api.src.aeroapi_market.Flights import Flights
 from aeromarket_api.src.aeroapi_market.APICaller import APICaller

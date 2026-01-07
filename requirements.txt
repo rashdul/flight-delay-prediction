@@ -20,3 +20,4 @@ retry_requests
 geopy
 lightgbm
 xgboost
+catboost

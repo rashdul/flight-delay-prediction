@@ -308,7 +308,7 @@ class FeatureEngineeringDepDelay:
       return self.df
   
   def _classification_schema(self, x) -> pd.DataFrame:
-      if x <= 60:
+      if x < 45:
         return 0
       else:
         return 1
@@ -318,9 +318,12 @@ class FeatureEngineeringDepDelay:
       if self.type == "new":
         cols_to_drop.remove('arr_date')
         cols_to_drop.remove('DepDelayMinutes')
-      if (self.classification and self.type == "old") or is_test:
-          self.df['DepDelayCategory'] = self.df['DepDelayMinutes'].apply(self._classification_schema)
-          cols_to_drop.append('log1p_DepDelayMinutes')
+      if is_test:
+        cols_to_drop.append('arr_date')
+        cols_to_drop.append('DepDelayMinutes')
+      if (self.classification and self.type == "old") or (self.classification and is_test):
+        self.df['DepDelayCategory'] = self.df['DepDelayMinutes'].apply(self._classification_schema)
+        cols_to_drop.append('log1p_DepDelayMinutes')
       self.df = self._seperate_time_features()
       self.df = self._add_stats_features()
       self.df = self._add_congestion_features()
