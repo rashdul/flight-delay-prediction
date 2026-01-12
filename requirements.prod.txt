@@ -1,0 +1,27 @@
+# Lean runtime dependencies for deployment (avoid notebook/training-only packages)
+
+# API server
+fastapi
+uvicorn[standard]
+gunicorn
+python-dotenv
+
+# Data + model runtime
+numpy
+pandas
+scipy
+scikit-learn
+joblib
+catboost
+
+# External APIs / utilities
+requests
+requests_cache
+openmeteo_requests
+retry_requests
+tqdm
+geopy
+airportsdata
+
+# OpenAI summary (optional at runtime; falls back if OPENAI_API_KEY not set)
+openai

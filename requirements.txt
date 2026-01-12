@@ -11,6 +11,9 @@ transformers
 datasets
 huggingface-hub
 requests
+fastapi
+uvicorn[standard]
+gunicorn
 python-dotenv
 airportsdata
 openmeteo_requests
@@ -21,3 +24,5 @@ geopy
 lightgbm
 xgboost
 catboost
+joblib
+openai

@@ -284,14 +284,24 @@ class Flights:
     
 
     def _get_approx_flight_time_mins(self, origin_code, destination_code):
-        end_point = self._get_airport_endpoint(origin_code, destination_code, code_type="iata")
-        response = self.api_caller.get(endpoint=end_point, params=None, headers=None)['approxFlightTime']
-        ## convert to minutes
-        
-        hours, minutes, seconds = map(int, response.split(":"))
+        # Approximate elapsed time based on the flight's departure/arrival timestamps
+        # to avoid an extra API call.
+        if self.response_flight_response is None:
+            end_point = self._get_flights_endpoint(search_by="number")
+            params = {
+                "dateLocalRole": "Departure"
+            }
+            self.response_flight_response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
 
-        total_minutes = hours * 60 + minutes + seconds / 60
-        return total_minutes
+        arrival_datetime = self._get_arrival_datetime()
+        if self.is_future:
+            departure_datetime = self.response_flight_response[0]['departure']['scheduledTime']['local']
+        else:
+            departure_datetime = self.response_flight_response[0]['departure']['revisedTime']['local']
+
+        dt_arr = datetime.fromisoformat(arrival_datetime)
+        dt_dep = datetime.fromisoformat(departure_datetime)
+        return (dt_arr - dt_dep).total_seconds() / 60
 
     def _get_airport_endpoint(
         self,
@@ -384,8 +394,22 @@ class Flights:
             raise ValueError(f"Flight number {self.flight_number} not found in the data.")
         dest = df_flight['airport_iata'].values[0]
         origin = self.airport_code
-        approx_flight_time_min = self._get_approx_flight_time_mins(origin, dest)
         arrival_datetime = self._get_arrival_datetime()
+        dict_df['Actual_Arrival_Time'] = arrival_datetime
+        if self.response_flight_response is None:
+            end_point = self._get_flights_endpoint(search_by="number")
+            params = {
+                "dateLocalRole": "Departure"
+            }
+            self.response_flight_response = self.api_caller.get(endpoint=end_point, params=params, headers=None)
+
+        if self.is_future:
+            departure_datetime = self.response_flight_response[0]['departure']['scheduledTime']['local']
+        else:
+            departure_datetime = self.response_flight_response[0]['departure']['revisedTime']['local']
+
+        dict_df['Actual_Departure_Time'] = departure_datetime
+        elapsed_mins = (datetime.fromisoformat(arrival_datetime) - datetime.fromisoformat(departure_datetime)).total_seconds() / 60
         dt = datetime.fromisoformat(arrival_datetime)
         floored_dt = dt.replace(minute=0, second=0, microsecond=0, tzinfo=None)
         
@@ -397,7 +421,7 @@ class Flights:
         dict_df['Distance'] = self._get_distance(origin_code=origin, destination_code=dest)
         dict_df['dep_scheduled_congestion'] = self.get_count_airport_flights() 
         dict_df['arr_scheduled_congestion'] = self._get_arrival_count_airport_flights(airport_code=dest)
-        dict_df['CRSElapsedTime'] = approx_flight_time_min
+        dict_df['CRSElapsedTime'] = elapsed_mins
         dict_df['arr_datetime'] = floored_dt
         dict_df['dep_date_local'] = df_flight['date'].iloc[0].to_pydatetime()
         final_df = pd.DataFrame([dict_df])

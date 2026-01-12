@@ -87,7 +87,11 @@ class APICaller:
             )
             r.raise_for_status()
             if not r.text.strip():
-                raise RuntimeError("Empty response body")
+                # Some upstreams return 204 No Content (or an empty 200) on "not found".
+                # Give enough context to debug without leaking the API key.
+                raise RuntimeError(
+                    f"Empty response body from upstream (status={r.status_code}) for {method} {r.url}"
+                )
             return r.json()
         except requests.exceptions.RequestException as e:
             logging.error("HTTP request failed: %s", e)

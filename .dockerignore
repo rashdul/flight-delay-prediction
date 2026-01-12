@@ -1,0 +1,48 @@
+fly.toml
+.git/
+.github/
+.vscode/
+
+# Python bytecode / caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.pyo
+.Python
+
+# Virtual environments
+.envrc
+.venv/
+venv/
+env/
+
+# Local env files (keep secrets out of images)
+.env
+.env.*
+
+# Python tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Jupyter / data exploration artifacts
+*.ipynb
+.ipynb_checkpoints/
+notebooks/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.log

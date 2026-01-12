@@ -1,20 +1,81 @@
-# Python caches
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
 
 # Virtual environments
-.venv/
 venv/
+env/
 ENV/
+.venv
 
-# Local env/config
-.env
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
-# Notebook caches
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
 .cache.sqlite
 notebooks/.cache.sqlite
 
-# Large local data artifacts (keep out of git)
-*.parquet
+# ML/Data artifacts
+catboost_info/
 *.pkl
+*.joblib
+*.h5
+*.pt
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project specific
+/data/raw/
+*.csv
+*.parquet
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE workspace settings (optional - remove if you want to track these)
+*.code-workspace
+
+# FastAPI specific
+*.log
+logs/
+.uvicorn_cache/
+*.db
+*.sqlite
+*.sqlite3
+tmp/
+temp/
