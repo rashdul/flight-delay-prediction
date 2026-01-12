@@ -8,9 +8,21 @@ from features.src.feature_engineering_depDelay import FeatureEngineeringDepDelay
 from schemas.flightDate import FlightQuery
 from models.src.DelayClassifier import DelayClassifier
 from openai_summarizer.src.openai_summarizer import summarize_delay_prediction, generate_delay_risk_message
+from fastapi.middleware.cors import CORSMiddleware
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://rdulaijan.com",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 load_dotenv()
@@ -83,7 +95,7 @@ def predict_delay(
     flight_number: str = Query(..., min_length=1, max_length=4, description="Flight number, e.g., '2012'"),
     flight_date: FlightQuery = Depends(),
     summarize: bool = Query(
-        False,
+        True,
         description="If true, include an OpenAI-generated summary of the prediction and key flight/weather inputs (requires OPENAI_API_KEY).",
     ),
     summarize_debug: bool = Query(

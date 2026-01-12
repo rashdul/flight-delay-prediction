@@ -277,7 +277,7 @@ def summarize_delay_prediction(
 
     Rules:
     - Only state information that is explicitly present in the input.
-    - state model prediction as the is a 1 hour risk of delay or is not at risk of delay.
+    - Prediction: 0, means there is no risk of a one-hour delay, 1 means there is a risk of a one-hour delay.
     - Do not infer causes, impacts, or outcomes.
     - Do not apply external domain knowledge or general assumptions.
     - Do not describe conditions qualitatively (e.g., favorable, mild, severe, smooth) unless explicitly stated in the input.
@@ -287,6 +287,7 @@ def summarize_delay_prediction(
     - Do not mention models, thresholds, probabilities, predictions, or internal logic unless explicitly included in the input.
     - If information is missing or uncertain, state that clearly without guessing.
     - The summary must be understandable to non-technical users.
+    -
 
     Congestion handling (explicit rules):
     - Do not state numeric congestion values.
