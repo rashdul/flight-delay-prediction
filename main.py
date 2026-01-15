@@ -104,9 +104,9 @@ def predict_delay(
     ),
 ):
     flight_date_str = flight_date.flight_date.isoformat()
-    print(
-        f"Fetching flight and weather data for Flight Number {flight_prefix} {flight_number} and date {flight_date_str}"
-    )
+    # print(
+    #     f"Fetching flight and weather data for Flight Number {flight_prefix} {flight_number} and date {flight_date_str}"
+    # )
 
     try:
         flight_weather = FlightWeather(
